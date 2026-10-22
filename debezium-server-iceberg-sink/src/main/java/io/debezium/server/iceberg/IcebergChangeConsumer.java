@@ -33,6 +33,7 @@ import org.apache.iceberg.Table;
 import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.types.Types.NestedField;
 import org.apache.kafka.common.serialization.Deserializer;
 import org.apache.kafka.common.serialization.Serde;
 import org.slf4j.Logger;
@@ -93,10 +94,10 @@ public class IcebergChangeConsumer extends BaseChangeConsumer implements Debeziu
     batchSizeWait = IcebergUtil.selectInstance(batchSizeWaitInstances, config.batch().batchSizeWaitName());
     batchSizeWait.initizalize();
 
-    // configure and set 
+    // configure and set
     valSerde.configure(Collections.emptyMap(), false);
     valDeserializer = valSerde.deserializer();
-    // configure and set 
+    // configure and set
     keySerde.configure(Collections.emptyMap(), true);
     keyDeserializer = keySerde.deserializer();
   }
@@ -111,10 +112,10 @@ public class IcebergChangeConsumer extends BaseChangeConsumer implements Debeziu
         records.stream()
             .map((ChangeEvent<Object, Object> e)
                 -> new RecordConverter(e.destination(),
-                getBytes(e.value()),
+            getBytes(e.value()),
                 e.key() == null ? null : getBytes(e.key())
                 , config))
-            .collect(Collectors.groupingBy(RecordConverter::destination));
+        .collect(Collectors.groupingBy(RecordConverter::destination));
 
     // consume list of events for each destination table
     for (Map.Entry<String, List<RecordConverter>> tableEvents : result.entrySet()) {
@@ -151,8 +152,19 @@ public class IcebergChangeConsumer extends BaseChangeConsumer implements Debeziu
         // Schema change events are identified by the presence of "ddl", "databaseName", and "tableChanges" fields.
         // "schema change topic" https://debezium.io/documentation/reference/3.0/connectors/mysql.html#mysql-schema-change-topic
         if (sampleEvent.isSchemaChangeEvent()) {
-          LOGGER.warn("Schema change topic detected. Creating Iceberg schema without identifier fields for append-only mode.");
-          return IcebergUtil.createIcebergTable(icebergCatalog, tableId, new Schema(schema.columns()), config.iceberg().writeFormat());
+          LOGGER.warn("Schema change topic detected. Creating Iceberg schema using all fields as identifier fields for append-only mode.");
+
+          if (!config.iceberg().upsert() || config.iceberg().createIdentifierFields()) {
+              schema.identifierFieldIds()
+                .addAll(schema
+                  .columns()
+                  .stream()
+                  .map(NestedField::fieldId)
+                  .toList()
+                );
+          }
+          Schema newSchema = new Schema(schema.columns());
+          return IcebergUtil.createIcebergTable(icebergCatalog, tableId, newSchema, config.iceberg().writeFormat());
         }
 
         return IcebergUtil.createIcebergTable(icebergCatalog, tableId, schema, config.iceberg().writeFormat());
